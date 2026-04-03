@@ -236,6 +236,10 @@ const emptyState = document.getElementById("emptyState");
 const searchInput = document.getElementById("searchInput");
 const categorySelect = document.getElementById("categorySelect");
 const catalogChips = document.querySelectorAll(".catalog-chip");
+const catalogCountBadge = document.querySelector(".catalog-count-badge");
+const catalogMobileActions = document.getElementById("catalogMobileActions");
+const catalogMobileNote = document.getElementById("catalogMobileNote");
+const catalogMobileToggle = document.getElementById("catalogMobileToggle");
 const menuToggle = document.querySelector(".menu-toggle");
 const siteNav = document.getElementById("site-nav");
 const currentYear = document.getElementById("currentYear");
@@ -250,7 +254,9 @@ const productModalPlans = document.getElementById("productModalPlans");
 const productModalOrder = document.getElementById("productModalOrder");
 const productModalNote = document.getElementById("productModalNote");
 const mobileMotionQuery = window.matchMedia("(max-width: 820px)");
+const compactCatalogQuery = window.matchMedia("(max-width: 720px)");
 const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+const MOBILE_PRODUCT_LIMIT = 4;
 
 const businessContact = {
   // Isi dengan nomor WhatsApp bisnis format 628xxxxxxxxxx saat sudah siap dipasang.
@@ -272,6 +278,7 @@ let activeProduct = null;
 let activePlanIndex = 0;
 let previousFocusedElement = null;
 let mobileRevealObserver = null;
+let isMobileCatalogExpanded = false;
 
 function registerMediaQueryListener(query, handler) {
   if (typeof query.addEventListener === "function") {
@@ -418,6 +425,60 @@ function buildWhatsAppLink(product, plan) {
   return `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`;
 }
 
+function createMobilePlanSummary(product) {
+  const totalPlans = product.plans.length;
+  const planLabel = totalPlans > 1 ? `${totalPlans} pilihan paket` : "1 pilihan paket";
+
+  return `
+    <div class="product-mobile-summary">
+      <span class="product-mobile-summary-count">${planLabel}</span>
+      <span class="product-mobile-summary-note">Lihat semua durasi dan harga di detail produk.</span>
+    </div>
+  `;
+}
+
+function updateCatalogCountBadge(filteredCount) {
+  if (!catalogCountBadge) {
+    return;
+  }
+
+  if (filteredCount === availableProducts.length) {
+    catalogCountBadge.textContent = `${availableProducts.length} produk aktif`;
+    return;
+  }
+
+  catalogCountBadge.textContent = `${filteredCount} hasil ditemukan`;
+}
+
+function updateCatalogMobileActions(filteredCount, visibleCount, hasFilters) {
+  if (!catalogMobileActions || !catalogMobileNote || !catalogMobileToggle) {
+    return;
+  }
+
+  const shouldShowActions =
+    compactCatalogQuery.matches && !hasFilters && filteredCount > MOBILE_PRODUCT_LIMIT;
+
+  if (!shouldShowActions) {
+    catalogMobileActions.hidden = true;
+    catalogMobileToggle.setAttribute("aria-expanded", "false");
+    return;
+  }
+
+  catalogMobileActions.hidden = false;
+  catalogMobileToggle.setAttribute("aria-expanded", String(isMobileCatalogExpanded));
+
+  if (isMobileCatalogExpanded) {
+    catalogMobileNote.textContent =
+      `Semua ${filteredCount} produk sedang ditampilkan. Anda bisa kembali ke tampilan yang lebih ringkas kapan saja.`;
+    catalogMobileToggle.textContent = "Tampilkan versi ringkas";
+    return;
+  }
+
+  catalogMobileNote.textContent =
+    `Menampilkan ${visibleCount} dari ${filteredCount} produk agar katalog tetap nyaman dilihat di mobile.`;
+  catalogMobileToggle.textContent = `Lihat semua ${filteredCount} produk`;
+}
+
 function createProductCard(product) {
   const leadPlan = product.plans[0];
   const imageMarkup = `
@@ -441,6 +502,7 @@ function createProductCard(product) {
       `,
     )
     .join("");
+  const compactSummaryMarkup = createMobilePlanSummary(product);
   const priceFocusMarkup = leadPlan
     ? `
         <div class="product-price-focus">
@@ -469,18 +531,24 @@ function createProductCard(product) {
         <span class="product-category">${product.category}</span>
       </div>
       ${priceFocusMarkup}
+      ${compactSummaryMarkup}
       <ul class="product-plans">${planMarkup}</ul>
       <div class="product-links">
         <button class="product-secondary-link" type="button" data-open-product="${product.name}">Lihat Detail</button>
-        <button class="product-order-button" type="button" data-open-product="${product.name}">Pilih Produk</button>
+        <button class="product-order-button" type="button" data-open-product="${product.name}">Lihat Paket</button>
       </div>
     </article>
   `;
 }
 
 function renderProducts() {
+  if (!productGrid || !searchInput || !categorySelect || !emptyState) {
+    return;
+  }
+
   const keyword = searchInput.value.trim().toLowerCase();
   const category = categorySelect.value;
+  const hasFilters = keyword.length > 0 || category !== "Semua";
 
   const filteredProducts = availableProducts.filter((product) => {
     const searchText = [
@@ -498,8 +566,17 @@ function renderProducts() {
     return matchKeyword && matchCategory;
   });
 
-  productGrid.innerHTML = filteredProducts.map(createProductCard).join("");
+  const shouldCompactCatalog =
+    compactCatalogQuery.matches && !hasFilters && filteredProducts.length > MOBILE_PRODUCT_LIMIT;
+  const visibleProducts =
+    shouldCompactCatalog && !isMobileCatalogExpanded
+      ? filteredProducts.slice(0, MOBILE_PRODUCT_LIMIT)
+      : filteredProducts;
+
+  productGrid.innerHTML = visibleProducts.map(createProductCard).join("");
   emptyState.hidden = filteredProducts.length > 0;
+  updateCatalogCountBadge(filteredProducts.length);
+  updateCatalogMobileActions(filteredProducts.length, visibleProducts.length, hasFilters);
 
   catalogChips.forEach((chip) => {
     chip.classList.toggle("is-active", chip.dataset.category === category);
@@ -521,7 +598,7 @@ function updateProductModal() {
   productModalDescription.textContent = createProductDescription(activeProduct);
   productModalCategory.textContent = activeProduct.category;
   productModalPrice.textContent = selectedPlan.price;
-  productModalPriceNote.textContent = `${selectedPlan.name} â€¢ Durasi ${selectedPlan.duration}`;
+  productModalPriceNote.textContent = `${selectedPlan.name} | Durasi ${selectedPlan.duration}`;
   productModalPlans.innerHTML = activeProduct.plans
     .map(
       (plan, index) => `
@@ -588,6 +665,11 @@ function closeProductModal() {
   }
 }
 
+function handleCatalogFilterChange() {
+  isMobileCatalogExpanded = false;
+  renderProducts();
+}
+
 if (productGrid && searchInput && categorySelect) {
   categorySelect.querySelectorAll("option").forEach((option) => {
     option.hidden = !availableCategories.has(option.value);
@@ -602,14 +684,21 @@ if (productGrid && searchInput && categorySelect) {
   }
 
   renderProducts();
-  searchInput.addEventListener("input", renderProducts);
-  categorySelect.addEventListener("change", renderProducts);
+  searchInput.addEventListener("input", handleCatalogFilterChange);
+  categorySelect.addEventListener("change", handleCatalogFilterChange);
   catalogChips.forEach((chip) => {
     chip.addEventListener("click", () => {
       categorySelect.value = chip.dataset.category || "Semua";
-      renderProducts();
+      handleCatalogFilterChange();
     });
   });
+
+  if (catalogMobileToggle) {
+    catalogMobileToggle.addEventListener("click", () => {
+      isMobileCatalogExpanded = !isMobileCatalogExpanded;
+      renderProducts();
+    });
+  }
 
   productGrid.addEventListener("click", (event) => {
     const trigger = event.target.closest("[data-open-product], .product-card[data-product-name]");
@@ -691,6 +780,13 @@ if (currentYear) {
   currentYear.textContent = String(new Date().getFullYear());
 }
 
+registerMediaQueryListener(compactCatalogQuery, () => {
+  if (!compactCatalogQuery.matches) {
+    isMobileCatalogExpanded = false;
+  }
+
+  renderProducts();
+});
 registerMediaQueryListener(mobileMotionQuery, syncMobileMotionState);
 registerMediaQueryListener(reducedMotionQuery, syncMobileMotionState);
 syncMobileMotionState();
